@@ -53,7 +53,7 @@ static int   njobs         = 0;
 static int   next_job_id   = 1;
 
 /* PID of the currently-running foreground child (0 = none) */
-static volatile pid_t fg_pid = 0;
+static volatile sig_atomic_t fg_pid = 0;
 
 /* ================================================================== */
 /*  Job helpers                                                        */
@@ -99,13 +99,12 @@ static void reap_children(void)
     int status;
     pid_t pid;
     while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
-        Job *j = job_by_pid(pid);
-        if (j) {
-            printf("\n[%d]+ Done\t%s\n", j->id, j->cmd);
-            fflush(stdout);
-            /* mark for removal — remove inline */
-            for (int i = 0; i < njobs; i++) {
-                if (job_table[i].pid == pid) { job_remove(i); break; }
+        for (int i = 0; i < njobs; i++) {
+            if (job_table[i].pid == pid) {
+                printf("[%d]+ Done\t%s\n", job_table[i].id, job_table[i].cmd);
+                fflush(stdout);
+                job_remove(i);
+                break;
             }
         }
     }
@@ -118,7 +117,10 @@ static void reap_children(void)
 static void sigchld_handler(int sig)
 {
     (void)sig;
-    reap_children();
+    /* Only waitpid here — printf is not async-signal-safe.
+     * reap_children() in the main loop prints the "Done" notice. */
+    int status;
+    while (waitpid(-1, &status, WNOHANG) > 0) { /* reap, don't print */ }
 }
 
 static void sigint_handler(int sig)
